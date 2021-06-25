@@ -112,6 +112,7 @@ function drawTile() {
     ctx.clearRect(0, 0, height, height);
 
     const features = tile.features;
+    if (options.debug > 1) console.log('features: ', features);
 
     ctx.strokeStyle = 'red';
     ctx.fillStyle = 'rgba(255,0,0,0.05)';
@@ -134,6 +135,7 @@ function drawTile() {
                 const p = geom[k];
                 if (k) ctx.lineTo(p[0] * ratio + pad, p[1] * ratio + pad);
                 else ctx.moveTo(p[0] * ratio + pad, p[1] * ratio + pad);
+                ctx.arc(p[0] * ratio + pad, p[1] * ratio + pad, 2, 0, 2 * Math.PI, false);
             }
         }
 
