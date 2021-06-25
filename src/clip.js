@@ -35,12 +35,17 @@ export default function clip(features, scale, k1, k2, axis, minAll, maxAll, opti
         }
 
         let newGeometry = [];
+        const newTags = [];
 
         if (type === 'Point' || type === 'MultiPoint') {
             clipPoints(geometry, newGeometry, k1, k2, axis);
 
         } else if (type === 'LineString') {
-            clipLine(geometry, newGeometry, k1, k2, axis, false, options.lineMetrics);
+            if (options.vertexTags) {
+                clipLine(geometry, newGeometry, k1, k2, axis, false, options.lineMetrics, options.vertexTags, feature.tags, newTags);
+            } else {
+                clipLine(geometry, newGeometry, k1, k2, axis, false, options.lineMetrics);
+            }
 
         } else if (type === 'MultiLineString') {
             clipLines(geometry, newGeometry, k1, k2, axis, false);
@@ -59,11 +64,26 @@ export default function clip(features, scale, k1, k2, axis, minAll, maxAll, opti
         }
 
         if (newGeometry.length) {
-            if (options.lineMetrics && type === 'LineString') {
-                for (const line of newGeometry) {
-                    clipped.push(createFeature(feature.id, type, line, feature.tags));
+            if (type === 'LineString') {
+                if (options.vertexTags) {
+                    for (let i = 0; i < newGeometry.length; i++) {
+                        const line = newGeometry[i];
+                        const lineTags = newTags[i];
+                        for (const [key, value] of Object.entries(feature.tags)) {
+                            if (!options.vertexTags.includes(key)) {
+                                lineTags[key] = value;
+                            }
+                        }
+                        clipped.push(createFeature(feature.id, type, line, lineTags));
+                    }
+                    continue;
                 }
-                continue;
+                if (options.lineMetrics) {
+                    for (const line of newGeometry) {
+                        clipped.push(createFeature(feature.id, type, line, feature.tags));
+                    }
+                    continue;
+                }
             }
 
             if (type === 'LineString' || type === 'MultiLineString') {
@@ -95,12 +115,12 @@ function clipPoints(geom, newGeom, k1, k2, axis) {
     }
 }
 
-function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
-
+function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics, vertexTags = null, tags = null, newTags = null) {
     let slice = newSlice(geom);
     const intersect = axis === 0 ? intersectX : intersectY;
     let len = geom.start;
     let segLen, t;
+    let sliceTags = vertexTags ? newSliceTags(vertexTags) : null;
 
     for (let i = 0; i < geom.length - 3; i += 3) {
         const ax = geom[i];
@@ -111,6 +131,8 @@ function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
         const a = axis === 0 ? ax : ay;
         const b = axis === 0 ? bx : by;
         let exited = false;
+        const ai = i / 3;
+        const bi = i / 3 + 1;
 
         if (trackMetrics) segLen = Math.sqrt(Math.pow(ax - bx, 2) + Math.pow(ay - by, 2));
 
@@ -119,15 +141,30 @@ function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
             if (b > k1) {
                 t = intersect(slice, ax, ay, bx, by, k1);
                 if (trackMetrics) slice.start = len + segLen * t;
+                if (vertexTags) {
+                    for (const key of vertexTags) {
+                        sliceTags[key].push(Math.round(tags[key][ai] + (tags[key][bi] - tags[key][ai]) * t));
+                    }
+                }
             }
         } else if (a > k2) {
             // |  <--|--- (line enters the clip region from the right)
             if (b < k2) {
                 t = intersect(slice, ax, ay, bx, by, k2);
                 if (trackMetrics) slice.start = len + segLen * t;
+                if (vertexTags) {
+                    for (const key of vertexTags) {
+                        sliceTags[key].push(Math.round(tags[key][ai] + (tags[key][bi] - tags[key][ai]) * t));
+                    }
+                }
             }
         } else {
             addPoint(slice, ax, ay, az);
+            if (vertexTags) {
+                for (const key of vertexTags) {
+                    sliceTags[key].push(tags[key][ai]);
+                }
+            }
         }
         if (b < k1 && a >= k1) {
             // <--|---  | or <--|-----|--- (line exits the clip region on the left)
@@ -142,8 +179,17 @@ function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
 
         if (!isPolygon && exited) {
             if (trackMetrics) slice.end = len + segLen * t;
+            if (vertexTags) {
+                for (const key of vertexTags) {
+                    sliceTags[key].push(Math.round(tags[key][ai] + (tags[key][bi] - tags[key][ai]) * t));
+                }
+            }
             newGeom.push(slice);
             slice = newSlice(geom);
+            if (vertexTags) {
+                newTags.push(sliceTags);
+                sliceTags = newSliceTags(vertexTags);
+            }
         }
 
         if (trackMetrics) len += segLen;
@@ -155,7 +201,10 @@ function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
     const ay = geom[last + 1];
     const az = geom[last + 2];
     const a = axis === 0 ? ax : ay;
-    if (a >= k1 && a <= k2) addPoint(slice, ax, ay, az);
+    if (a >= k1 && a <= k2) {
+        addPoint(slice, ax, ay, az);
+        if (vertexTags) for (const key of vertexTags) sliceTags[key].push(tags[key][last / 3]);
+    }
 
     // close the polygon if its endpoints are not the same after clipping
     last = slice.length - 3;
@@ -166,6 +215,7 @@ function clipLine(geom, newGeom, k1, k2, axis, isPolygon, trackMetrics) {
     // add the final slice
     if (slice.length) {
         newGeom.push(slice);
+        if (vertexTags) newTags.push(sliceTags);
     }
 }
 
@@ -175,6 +225,12 @@ function newSlice(line) {
     slice.start = line.start;
     slice.end = line.end;
     return slice;
+}
+
+function newSliceTags(keys) {
+    const sliceTags = {};
+    for (const key of keys) sliceTags[key] = [];
+    return sliceTags;
 }
 
 function clipLines(geom, newGeom, k1, k2, axis, isPolygon) {

@@ -26,6 +26,7 @@ function addFeature(tile, feature, tolerance, options) {
     const geom = feature.geometry;
     const type = feature.type;
     const simplified = [];
+    let filteredIndices;
 
     tile.minX = Math.min(tile.minX, feature.minX);
     tile.minY = Math.min(tile.minY, feature.minY);
@@ -40,7 +41,7 @@ function addFeature(tile, feature, tolerance, options) {
         }
 
     } else if (type === 'LineString') {
-        addLine(simplified, geom, tile, tolerance, false, false);
+        filteredIndices = addLine(simplified, geom, tile, tolerance, false, false, !!options.vertexTags);
 
     } else if (type === 'MultiLineString' || type === 'Polygon') {
         for (let i = 0; i < geom.length; i++) {
@@ -59,12 +60,20 @@ function addFeature(tile, feature, tolerance, options) {
 
     if (simplified.length) {
         let tags = feature.tags || null;
-
-        if (type === 'LineString' && options.lineMetrics) {
+        if (type === 'LineString') {
             tags = {};
             for (const key in feature.tags) tags[key] = feature.tags[key];
-            tags['mapbox_clip_start'] = geom.start / geom.size;
-            tags['mapbox_clip_end'] = geom.end / geom.size;
+
+            if (options.lineMetrics) {
+                tags['mapbox_clip_start'] = geom.start / geom.size;
+                tags['mapbox_clip_end'] = geom.end / geom.size;
+            }
+
+            if (options.vertexTags) {
+                for (const key in feature.tags) {
+                    if (options.vertexTags.includes(key)) tags[key] = feature.tags[key].filter((_, id) => filteredIndices.includes(id));
+                }
+            }
         }
 
         const tileFeature = {
@@ -80,12 +89,13 @@ function addFeature(tile, feature, tolerance, options) {
     }
 }
 
-function addLine(result, geom, tile, tolerance, isPolygon, isOuter) {
+function addLine(result, geom, tile, tolerance, isPolygon, isOuter, filterTags) {
     const sqTolerance = tolerance * tolerance;
+    const filteredIndices = [];
 
     if (tolerance > 0 && (geom.size < (isPolygon ? sqTolerance : tolerance))) {
         tile.numPoints += geom.length / 3;
-        return;
+        return filterTags ? filteredIndices : null;
     }
 
     const ring = [];
@@ -94,6 +104,7 @@ function addLine(result, geom, tile, tolerance, isPolygon, isOuter) {
         if (tolerance === 0 || geom[i + 2] > sqTolerance) {
             tile.numSimplified++;
             ring.push(geom[i], geom[i + 1]);
+            if (filterTags) filteredIndices.push(i / 3);
         }
         tile.numPoints++;
     }
@@ -101,6 +112,7 @@ function addLine(result, geom, tile, tolerance, isPolygon, isOuter) {
     if (isPolygon) rewind(ring, isOuter);
 
     result.push(ring);
+    return filterTags ? filteredIndices : null;
 }
 
 function rewind(ring, clockwise) {

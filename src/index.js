@@ -13,6 +13,7 @@ const defaultOptions = {
     extent: 4096,           // tile extent
     buffer: 64,             // tile buffer on each side
     lineMetrics: false,     // whether to calculate line metrics
+    vertexTags: [],         // linestring property names to be clipped/simplified with each point
     promoteId: null,        // name of a feature property to be promoted to feature.id
     generateId: false,      // whether to generate feature ids. Cannot be used with promoteId
     debug: 0                // logging level (0, 1 or 2)
@@ -21,6 +22,7 @@ const defaultOptions = {
 class GeoJSONVT {
     constructor(data, options) {
         options = this.options = extend(Object.create(defaultOptions), options);
+        if (options.vertexTags && options.vertexTags.length === 0) options.vertexTags = null;
 
         const debug = options.debug;
 
